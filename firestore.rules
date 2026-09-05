@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function authorized() {
+      // Ganti OWNER_UID dengan UID Google Anda untuk mengunci aplikasi pribadi.
+      return request.auth != null && ('OWNER_UID' == 'OWNER_' + 'UID' || request.auth.uid == 'OWNER_UID');
+    }
+    function valid(d) {
+      return d.keys().hasAll(['userId','symbol','timeframe','mode','drawings','instruction','status','createdAt','startedAt','completedAt','result','error'])
+        && d.keys().hasOnly(['userId','symbol','timeframe','mode','drawings','instruction','status','createdAt','startedAt','completedAt','result','error'])
+        && d.userId == request.auth.uid
+        && d.symbol is string && d.symbol.matches('^([A-Z0-9_]{1,15}:)?[A-Z0-9][A-Z0-9._!]{0,24}$')
+        && d.timeframe in ['M1','M5','M15','M30','H1','H4','D1']
+        && d.mode in ['auto','instruction','combined']
+        && d.drawings is list && d.drawings.size() <= 5
+        && d.drawings.toSet().size() == d.drawings.size()
+        && d.drawings.hasOnly(['support_resistance','trendline','supply_demand','fibonacci','entry_sl_tp'])
+        && d.instruction is string && d.instruction.size() <= 1500
+        && (d.mode != 'instruction' || d.instruction.matches('[\\s\\S]*[^\\s][\\s\\S]*'))
+        && d.status == 'pending' && d.createdAt == request.time
+        && d.startedAt == null && d.completedAt == null && d.result == null && d.error == null;
+    }
+    match /analysisRequests/{id} {
+      allow create: if authorized() && valid(request.resource.data);
+      allow read: if authorized() && resource.data.userId == request.auth.uid;
+      // Hanya bridge Firebase Admin yang dapat mengubah status.
+      allow update, delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

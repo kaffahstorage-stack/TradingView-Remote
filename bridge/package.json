@@ -1,0 +1,1 @@
+{"name":"bridge","private":true,"version":"0.1.0","type":"module","scripts":{"start":"node --env-file-if-exists=.env src/index.js"},"dependencies":{"firebase-admin":"^13.4.0","smol-toml":"^1.4.0"}}
