@@ -1,0 +1,1 @@
+{"type":"object","additionalProperties":false,"required":["dataAvailable","text","summary","symbol","timeframe"],"properties":{"dataAvailable":{"type":"boolean"},"text":{"type":"string"},"summary":{"type":"string"},"symbol":{"type":["string","null"]},"timeframe":{"type":["string","null"]}}}

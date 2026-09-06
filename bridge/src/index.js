@@ -2,6 +2,7 @@ import { applicationDefault, initializeApp, deleteApp } from 'firebase-admin/app
 import { getFirestore } from 'firebase-admin/firestore';
 import { loadCodexSettings, runCodex } from './codex.js';
 import { claimJob, finishJob, recoverExpired } from './jobs.js';
+import { createTradingView, startHeartbeat } from './tradingview.js';
 const log=(event,details={})=>console.log(JSON.stringify({time:new Date().toISOString(),event,...details}));
 async function main() {
   const ownerUid=process.env.OWNER_UID;
@@ -12,6 +13,8 @@ async function main() {
   const settings=await loadCodexSettings();
   const app=initializeApp({credential:applicationDefault(),projectId:process.env.FIREBASE_PROJECT_ID||'tradingview-remote'});
   const db=getFirestore(app);
+  const tradingView=createTradingView(settings.server);
+  const stopHeartbeat=startHeartbeat(db,ownerUid,tradingView,log);
   let stopping=false,running=false,unsubscribe=()=>{},activeController;
   let pending=[];
   async function pump() {
@@ -27,7 +30,12 @@ async function main() {
         activeController=new AbortController();
         if(stopping)activeController.abort();
         let result=null,error=null;
-        try {result=await runCodex(job.input,{...settings,timeoutMs,signal:activeController.signal});}catch(e){error=e;}
+                try {
+          result=await runCodex(job.input,{...settings,timeoutMs,signal:activeController.signal});
+          try {result.screenshot=await tradingView.screenshot(activeController.signal);}
+          catch {result.screenshot=null;result.screenshotError='Screenshot belum tersedia. Analisis teks tetap tersimpan.';log('screenshot_failed',{jobId:ref.id});}
+          if(activeController.signal.aborted) throw Object.assign(new Error('Bridge dihentikan.'),{code:'SHUTDOWN'});
+        } catch(e) {error=e;}
         // Retry persistence only, never the Codex invocation.
         let saved=false;
         for(let attempt=0;attempt<3&&!saved;attempt++) {
@@ -44,7 +52,7 @@ async function main() {
   async function shutdown() {
     stopping=true;unsubscribe();clearInterval(interval);activeController?.abort();
     if(running||closed)return;
-    closed=true;await db.terminate();await deleteApp(app);log('bridge_stopped');
+    closed=true;await stopHeartbeat();await tradingView.close();await db.terminate();await deleteApp(app);log('bridge_stopped');
   }
   const interval=setInterval(()=>{void pump();},5000);
   unsubscribe=db.collection('analysisRequests').where('userId','==',ownerUid).where('status','==','pending').limit(100).onSnapshot(s=>{

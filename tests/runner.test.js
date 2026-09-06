@@ -28,3 +28,10 @@ test('runner terminates timed out job and aborts shutdown',async()=>{
   await assert.rejects(runCodex(data,{...settings,timeoutMs:20,...fixture({hang:true})}),{code:'TIMEOUT'});
   const controller=new AbortController();const promise=runCodex(data,{...settings,signal:controller.signal,...fixture({hang:true})});setTimeout(()=>controller.abort(),20);await assert.rejects(promise,{code:'SHUTDOWN'});
 });
+
+test('structured Codex result retains numerical summary and only verified identifiers',async()=>{
+  const text=JSON.stringify({dataAvailable:true,text:'Entry 4050, SL 4030, TP 4070. Selisih SL/TP 20 point harga. Analisis, bukan kepastian.',summary:'Setup XAUUSD M5 selesai — Entry 4050, SL 4030, TP 4070.',symbol:'XAUUSD',timeframe:'M5'});
+  const result=await runCodex(data,{...settings,...fixture({text})});
+  assert.equal(result.symbol,'XAUUSD');assert.equal(result.timeframe,'M5');assert.ok(result.summary.includes('4050'));
+  await assert.rejects(runCodex(data,{...settings,...fixture({text:JSON.stringify({dataAvailable:false,text:'Tidak terhubung'})})}),{code:'CHART_UNAVAILABLE'});
+});

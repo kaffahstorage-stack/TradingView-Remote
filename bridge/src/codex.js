@@ -2,9 +2,11 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { requestsDrawingRemoval, SYMBOL_PATTERN, TIMEFRAMES } from '../../shared/validation.js';
 import { parse } from 'smol-toml';
 import { buildPrompt } from './prompt.js';
-export const ALLOWED_TOOLS = ['tv_health_check','chart_get_state','chart_set_symbol','chart_set_timeframe','chart_get_visible_range','symbol_info','data_get_ohlcv','data_get_study_values','draw_list','draw_shape','draw_get_properties'];
+export const ALLOWED_TOOLS = ['tv_health_check','chart_get_state','chart_set_symbol','chart_set_timeframe','chart_get_visible_range','symbol_info','data_get_ohlcv','data_get_study_values','draw_list','draw_shape','draw_get_properties','capture_screenshot'];
 export class JobError extends Error { constructor(code, message) {super(message);this.code=code;} }
 // TOML literals are arguments to a native process, never shell command text.
 export function toml(value) {
@@ -27,7 +29,7 @@ export async function loadCodexSettings(env=process.env) {
 }
 export function codexArgs(server, output) {
   const config={approval_policy:'never',web_search:'disabled','features.shell_tool':false,'features.unified_exec':false,'features.js_repl':false,'features.apps':false,'features.multi_agent':false,'apps._default.enabled':false,mcp_servers:{tradingview:server}};
-  return ['exec','--ignore-user-config','--ignore-rules','--strict-config','--ephemeral','--skip-git-repo-check','--sandbox','read-only','--color','never',...Object.entries(config).flatMap(([k,v])=>['-c',`${k}=${toml(v)}`]),'--output-last-message',output,'-'];
+  return ['exec','--ignore-user-config','--ignore-rules','--strict-config','--ephemeral','--skip-git-repo-check','--sandbox','read-only','--color','never',...Object.entries(config).flatMap(([k,v])=>['-c',`${k}=${toml(v)}`]),'--output-schema',fileURLToPath(new URL('./response.schema.json', import.meta.url)),'--output-last-message',output,'-'];
 }
 export function childEnvironment(env=process.env) {
   // Do not pass the bridge service-account path, API keys or arbitrary env secrets.
@@ -43,12 +45,13 @@ function killTree(child) {
 }
 export async function runCodex(data,{executable,server,timeoutMs,signal,spawnProcess=spawn,terminate=killTree}) {
   const prompt=buildPrompt(data);
+  const jobServer = {...server, enabled_tools: [...ALLOWED_TOOLS, ...(requestsDrawingRemoval(data.instruction) ? ['draw_remove_one'] : [])]};
   if(signal?.aborted) throw new JobError('SHUTDOWN','Bridge dihentikan sebelum analisis.');
   const dir=await mkdtemp(path.join(tmpdir(),'tv-remote-'));
   try {
     const output=path.join(dir,'result.txt');
     await new Promise((resolve,reject)=>{
-      const child=spawnProcess(executable,codexArgs(server,output),{cwd:dir,env:childEnvironment(),shell:false,windowsHide:true,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
+      const child=spawnProcess(executable,codexArgs(jobServer,output),{cwd:dir,env:childEnvironment(),shell:false,windowsHide:true,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});
       let bytes=0, failure, forceTimer;
       const stop=(error)=>{if(failure)return;failure=error;forceTimer=setTimeout(()=>{cleanup();reject(new JobError('KILL_UNCONFIRMED','Tidak dapat memastikan proses Codex berhenti. Hentikan proses di laptop sebelum menjalankan bridge lagi.'));},10000);terminate(child);};
       const abort=()=>stop(new JobError('SHUTDOWN','Bridge dihentikan. Drawing yang sempat dibuat mungkin tetap ada.'));
@@ -68,6 +71,14 @@ export async function runCodex(data,{executable,server,timeoutMs,signal,spawnPro
     const text=(await readFile(output,'utf8')).trim();
     if(!text)throw new JobError('EMPTY_OUTPUT','Codex menghasilkan jawaban kosong.');
     if(text.startsWith('ANALYSIS_UNAVAILABLE:'))throw new JobError('CHART_UNAVAILABLE','Data chart tidak tersedia atau tidak cocok. Periksa TradingView dan MCP di laptop.');
+        if (text.startsWith('{')) {
+      let result;
+      try { result = JSON.parse(text); } catch { throw new JobError('INVALID_OUTPUT', 'Jawaban Codex bukan JSON yang valid.'); }
+      if (result.dataAvailable !== true) throw new JobError('CHART_UNAVAILABLE', 'Data chart tidak tersedia. Periksa TradingView di laptop.');
+      if (typeof result.text !== 'string' || !result.text.trim() || typeof result.summary !== 'string') throw new JobError('INVALID_OUTPUT', 'Format hasil Codex tidak valid.');
+      return {text:result.text.slice(0,20000), summary:result.summary.slice(0,220), symbol:typeof result.symbol === 'string' && SYMBOL_PATTERN.test(result.symbol) ? result.symbol : null, timeframe:TIMEFRAMES.includes(result.timeframe) ? result.timeframe : null, screenshot:null};
+    }
+    // Preserve compatibility with older Codex CLI output and existing requests.
     return {text:text.slice(0,20000),screenshot:null};
   } finally {await rm(dir,{recursive:true,force:true});}
 }

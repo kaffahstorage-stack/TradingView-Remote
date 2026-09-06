@@ -44,3 +44,15 @@ test('real emulator transactions allow only one claim across concurrent workers'
     assert.equal((await ref.get()).data().status,'completed');
   } finally {await db.terminate();await deleteApp(app);}
 });
+
+test('chat schema and heartbeat ownership remain restricted',async()=>{
+  const db=env.authenticatedContext('alice').firestore();
+  const chat={...data(),requestType:'chat',symbol:null,timeframe:null,mode:'instruction',drawings:[],instruction:'Analisis XAUUSD M5'};
+  await assertSucceeds(setDoc(doc(db,'analysisRequests/chat'),chat));
+  for(const [i,change] of [{instruction:''},{instruction:' '.repeat(4)},{instruction:'x'.repeat(1501)},{requestType:'shell'},{symbol:'BTCUSD'},{userId:'bob'},{command:'whoami'},{drawings:['trendline']}].entries())await assertFails(setDoc(doc(db,`analysisRequests/bad-chat-${i}`),{...chat,...change}));
+  await env.withSecurityRulesDisabled(async context=>{await setDoc(doc(context.firestore(),'bridgeStatus/alice'),{userId:'alice',cdp_connected:true,api_available:true,checkedAt:new Date()});});
+  await assertSucceeds(getDoc(doc(db,'bridgeStatus/alice')));
+  await assertFails(getDoc(doc(env.authenticatedContext('bob').firestore(),'bridgeStatus/alice')));
+  await assertFails(setDoc(doc(db,'bridgeStatus/alice'),{userId:'alice',cdp_connected:true,api_available:true,checkedAt:new Date()}));
+  await assertFails(getDocs(collection(db,'bridgeStatus')));
+});

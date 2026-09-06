@@ -1,17 +1,17 @@
-# TradingView Remote — tahap 1
+# TradingView Remote — chat
 
-PWA React untuk mengirim permintaan analisis pribadi ke Firestore. Worker Node.js di laptop menjalankan `codex exec` non-interaktif melalui MCP TradingView yang sudah terdaftar. Tidak ada transaksi atau eksekusi order. Seluruh antarmuka memakai bahasa Indonesia; waktu ditampilkan di Asia/Makassar (WITA).
+PWA chat berbahasa Indonesia (waktu Asia/Makassar) untuk meminta analisis chart melalui Firebase dan bridge Codex lokal. Tidak menjalankan transaksi. Frontend dipublikasikan melalui GitHub Pages di https://kaffahstorage-stack.github.io/TradingView-Remote/. Workflow menjalankan lint, test, dan build ketika perubahan didorong ke main.
 
-## Menjalankan frontend
+## Frontend lokal
 
-Prasyarat: Node.js 22+, npm, Chrome/Edge terbaru.
+Node.js 22+ diperlukan. Dari root repository:
 
 ```powershell
 npm install
 npm run dev
 ```
 
-Buka http://127.0.0.1:5173. Login Google diperlukan untuk mengirim request. Formulir dapat dilihat sebelum login. Untuk demo **tanpa request Firebase**, gunakan http://127.0.0.1:5173/?demo=1; mode ini hanya tersedia pada hostname localhost/127.0.0.1 dan semua hasil diberi label simulasi.
+Buka http://127.0.0.1:5173 dan login Google. Sesudah login langsung masuk chat. Enter mengirim, Shift+Enter membuat baris baru. Pesan maksimal 1.500 karakter. Mode `?demo=1` hanya tersedia pada localhost/127.0.0.1, tidak mengirim request Firebase, dan memakai hasil simulasi. Status demo tetap Offline/Disconnected.
 
 ```powershell
 npm run lint
@@ -20,81 +20,60 @@ npm run build
 npm run preview
 ```
 
-Preview build: http://127.0.0.1:4173. Service worker aktif pada build production, bukan server dev. Tombol instal memanggil prompt browser jika tersedia, atau menampilkan panduan Android. Ikon PNG dibuat sendiri dari `web/public/icon.svg`. Aplikasi menyimpan hanya aset statis dalam cache; data Firebase tidak disimpan oleh service worker. Tidak ada Analytics dan Firebase Storage belum diinisialisasi.
+Preview default http://127.0.0.1:4173. Service worker aktif pada build production. Instal Android memerlukan HTTPS (atau localhost untuk pengujian di komputer). Tombol Instal menyediakan prompt browser/petunjuk Android. Cache service worker hanya untuk aset aplikasi, bukan data Firebase. Tidak memakai Analytics atau Firebase Storage. Saat offline kerangka aplikasi tetap tersedia; pengiriman memerlukan Firebase.
 
-Instal Android membutuhkan **HTTPS** di alamat yang dapat diakses ponsel. HTTP IP LAN bukan secure context untuk instalasi PWA. Deployment belum dilakukan. Saat offline, kerangka aplikasi dapat dibuka; login, kirim request, dan pembaruan status memerlukan internet. Service worker menawarkan pembaruan versi, bukan memuat ulang formulir secara paksa.
+## Migrasi Firebase manual
 
-## Langkah Firebase manual (belum dilakukan)
+Tidak ada konfigurasi Firebase online yang diubah oleh implementasi ini.
 
-1. Di project `tradingview-remote`, aktifkan Authentication → Sign-in method → Google. Isi email dukungan jika diminta.
-2. Tambahkan `localhost`, `127.0.0.1`, dan domain HTTPS frontend kelak ke Authentication → Authorized domains. Login memakai pop-up: izinkan pop-up jika diblokir. Untuk domain produksi, periksa pula konfigurasi OAuth domain/redirect Firebase sesuai dokumentasi Firebase.
-3. Buat database Cloud Firestore bila belum ada. Jangan membuka rules test/public. Terapkan isi `firestore.rules` lewat Firebase Console, setelah diperiksa.
-4. Buat indeks koleksi `analysisRequests`: `userId` ascending + `createdAt` descending, scope collection. Spesifikasi tersedia di `firestore.indexes.json`. Query bridge `userId` + `status` memakai penggabungan indeks equality bawaan.
-5. Login lalu salin UID akun dari Authentication → Users. Untuk mengunci rules ke satu pemilik, ubah fungsi `authorized()` menjadi `return request.auth != null && request.auth.uid == 'UID_ANDA';`. Placeholder `OWNER_UID` pada rules sekarang mengizinkan setiap pengguna login **hanya** membaca/membuat dokumen miliknya. Bridge tetap wajib dikunci ke UID pemilik, sehingga akun lain tidak bisa menjalankan Codex di laptop Anda.
-6. Buat service account dengan akses Firestore minimum yang diperlukan (misalnya Datastore User), simpan JSON **di luar repository**, batasi akses file OS. Jangan unggah atau tempel private key ke kode. Admin SDK melewati rules: keamanan mesin dan service account tetap penting.
+1. Pertahankan Google Authentication dan authorized domains yang sudah bekerja. Untuk Pages gunakan hostname `kaffahstorage-stack.github.io`, tanpa path repository. Izinkan popup login.
+2. Terapkan **rules terbaru** dari `firestore.rules` melalui Console setelah diperiksa. Rules lama menolak format request chat dan pembacaan `bridgeStatus`, sehingga status dapat Offline dengan pesan akses ditolak.
+3. **Pertahankan UID pemilik sebenarnya** jika rules online sudah dikunci. Jangan menggantinya kembali dengan placeholder `OWNER_UID`. Placeholder lokal mengizinkan akun login mengakses dokumennya sendiri; untuk pemakaian pribadi kunci `authorized()` ke UID Anda. Samakan UID ini dengan `OWNER_UID` pada bridge.
+4. Pertahankan/buat indeks collection `analysisRequests`: `userId` Ascending + `createdAt` Descending, sesuai `firestore.indexes.json`. Tunggu status indeks Enabled. Query bridge equality memakai indeks bawaan.
+5. Service account hanya berada di laptop, di luar repository, dengan akses Firestore minimum yang diperlukan. Admin SDK melewati Rules; jangan bagikan kredensial tersebut.
 
-Jangan menjalankan `firebase deploy` sebelum benar-benar siap. `firebase.json` hanya menyediakan konfigurasi lokal/rules/indeks; implementasi ini tidak mengubah konfigurasi Firebase online.
+Klien hanya boleh membuat request pending miliknya dan membaca dokumen sendiri. Klien tidak boleh mengubah hasil/status, menghapus request, menulis heartbeat, atau mengakses lock. Request dashboard lama tetap dapat dibaca dan diproses.
 
-## Menjalankan bridge di laptop
+## Bridge lokal
 
-1. Instal dan login Codex CLI (`codex login`) pada akun OS yang sama. Versi CLI harus mendukung `exec --ignore-user-config --ignore-rules --strict-config --ephemeral` dan `mcp_servers.*.enabled_tools`. Periksa `codex exec --help`. Gunakan binary native `codex.exe` di Windows, **bukan** shim npm `.cmd`/`.ps1`. Temukan dengan `Get-Command codex` atau lokasi binary dari instalasi CLI Anda.
-2. Pastikan `[mcp_servers.tradingview]` stdio berisi `command` dan `args` dalam `~/.codex/config.toml`; konfigurasi yang sudah ada dibaca tanpa diubah. Jalankan TradingView lokal dengan MCP/CDP Anda yang sudah dikonfigurasi. `TRADINGVIEW_EXECUTABLE` mencatat lokasi untuk peluncuran manual; bridge tidak meluncurkan atau membunuh aplikasi TradingView.
-3. Pastikan CDP hanya tersedia di **127.0.0.1:9222**. Jangan port-forward, tunnel, atau membuka port 9222 ke internet. Bridge memaksa host MCP ke loopback. Tidak ada HTTP server atau port masuk pada bridge; koneksi Firestore bersifat keluar.
-4. Salin `bridge/.env.example` ke `bridge/.env`. Isi `GOOGLE_APPLICATION_CREDENTIALS`, `OWNER_UID`, `CODEX_EXECUTABLE`, dan lokasi TradingView. `CODEX_CONFIG_PATH` opsional bila konfigurasi bukan default. `JOB_TIMEOUT_MS` default 180000, rentang 1000–900000.
-5. Jalankan dari root repository:
+1. Instal/login Codex CLI pada akun OS yang sama. Binary harus mendukung `exec --ignore-user-config --ignore-rules --strict-config --ephemeral` dan `--output-schema`. Gunakan executable native `codex.exe`, bukan shim `.cmd`/`.ps1`.
+2. Pertahankan server stdio `[mcp_servers.tradingview]` yang sudah terdaftar di konfigurasi Codex. MCP harus menyediakan `tv_health_check`, baca chart, set simbol/timeframe, drawing, dan `capture_screenshot`.
+3. Salin `bridge/.env.example` menjadi `bridge/.env`; isi `GOOGLE_APPLICATION_CREDENTIALS` dengan path JSON di luar Git, `OWNER_UID`, `CODEX_EXECUTABLE`, dan lokasi TradingView. `CODEX_CONFIG_PATH` opsional. Jangan memasukkan kredensial Admin ke variabel VITE_*.
+4. Jalankan TradingView/MCP lokal seperti biasa. CDP harus hanya di loopback 127.0.0.1:9222; jangan membuka/tunnel port ke internet. Lokasi `TRADINGVIEW_EXECUTABLE` merupakan referensi peluncuran manual.
+5. Jalankan `npm run bridge` dari root. Restart bridge setelah memperbarui kode/dependensi.
 
-```powershell
-npm run bridge
-```
+Prompt diteruskan melalui stdin menggunakan spawn tanpa shell. Tool Codex dibatasi; tidak tersedia transaksi, shell, klik/evaluate UI, atau eksekusi Pine. Simbol/timeframe yang disebut harus diverifikasi melalui MCP. Drawing lama dipertahankan; tool penghapusan satu drawing hanya diizinkan bila pesan secara eksplisit meminta penghapusan. Tidak tersedia penghapusan massal tanpa batas.
 
-Bridge membaca `bridge/.env` karena npm workspace menetapkan direktori kerja bridge. Jangan menaruh environment Admin di frontend/VITE_*.
+Bridge mengklaim request dan lock chart melalui transaksi, memproses satu job, lalu menyimpan hasil atau error. Claim token mencegah worker lama menimpa hasil. Timeout menghentikan tree proses; shutdown membatalkan job aktif. Lease kedaluwarsa ditandai gagal, tidak otomatis mengulang drawing. Jika `KILL_UNCONFIRMED`, lock ditandai blocked: pastikan proses job telah berhenti sebelum menghapus lock secara manual. Tidak ada jaminan exactly-once untuk drawing saat mesin mati mendadak.
 
-Bridge mengisolasi konfigurasi Codex per pemanggilan: mengambil **hanya** definisi server TradingView, allowlist tool baca/set chart dan tambah drawing, shell/unified exec/JS REPL/apps/multi-agent dimatikan, sandbox read-only, approval never. Konfigurasi/mode ini tidak mewarisi server MCP lain. Kebijakan mesin yang lebih ketat tetap dapat menolak tool; job akan gagal, bukan melewati sandbox. Tidak ada bypass approval berbahaya. Prompt dikirim lewat stdin dengan `spawn(..., shell:false)`, bukan argumen shell. Environment child tidak berisi path service-account atau API key dari bridge.
+## Skema chat, hasil, dan status
 
-Tool transaksi, UI click/keyboard/evaluate, Pine execution, peluncuran aplikasi, dan penghapusan drawing tidak termasuk allowlist. Instruksi tambahan diperlakukan sebagai data tak tepercaya; ini melengkapi pembatasan tool, bukan menjadi satu-satunya pengaman. Hanya jalankan versi MCP lokal yang tepercaya. Untuk drawing Fibonacci, MCP dasar hanya menyediakan bentuk umum; prompt meminta garis rasio berlabel dan menyatakan keterbatasannya.
+Request chat pada `analysisRequests/{id}` mempertahankan field lama: `userId`, `symbol: null`, `timeframe: null`, `mode: instruction`, `drawings: []`, `instruction`, `status: pending`, `createdAt: serverTimestamp`, serta `startedAt`, `completedAt`, `result`, `error` awalnya null. Field tambahan `requestType: chat` membedakannya dari formulir lama. Instruksi wajib berisi 1–1.500 karakter dan bukan perintah shell.
 
-## Data dan siklus job
+Hasil `result` berisi `text`, `summary`, `symbol`, `timeframe`, dan `screenshot` opsional. Jawaban meminta level numerik, batas supply/demand, atau harga entry/SL/TP beserta jarak dalam point/pip berdasarkan data chart. Hasil merupakan analisis, bukan kepastian. Ketika data tidak tersedia, bridge tidak mengarang harga.
 
-`analysisRequests/{autoId}` dibuat frontend dengan:
+Screenshot MCP diambil setelah analisis ketika lock chart masih dimiliki. Gambar dikompresi menjadi JPEG dan disimpan sebagai `{mimeType, data, width, height, capturedAt}` pada result (base64 maksimal 480.000 karakter). Ini tidak membutuhkan Storage. Jika MCP mengembalikan file, hanya file raster dalam direktori screenshot tepercaya yang diterima. `TRADINGVIEW_SCREENSHOT_DIR` dapat diisi; default diinferensikan dari lokasi `src/server.js` MCP. Kegagalan screenshot menyimpan `screenshotError` tanpa membuang jawaban teks. Gambar di chat dapat diperbesar. Dokumen gambar menambah bandwidth Firestore; riwayat dimuat 30 request per halaman.
 
-- `userId`, `symbol`, `timeframe`, `mode`, `drawings`, `instruction` (maksimal 1.500 karakter).
-- `status: pending`, `createdAt: serverTimestamp()`, `startedAt: null`, `completedAt: null`, `result: null`, `error: null`.
+Bridge menulis `bridgeStatus/{OWNER_UID}` sekitar setiap 20 detik, dengan `userId`, `checkedAt` server timestamp, `cdp_connected`, dan `api_available` dari hasil nyata `tv_health_check`. TradingView Connected memerlukan kedua boolean true dan heartbeat tidak lebih tua dari 60 detik. Status Online memerlukan respons server Firebase terbaru, bukan hanya status jaringan browser. Tidak adanya heartbeat berarti Disconnected.
 
-Preset simbol: COINBASE:BTCUSD, OANDA:XAUUSD, EURUSD. Simbol kustom memakai allowlist karakter dan tata bahasa `(EXCHANGE:)?TICKER` (exchange 1–15 karakter A–Z/0–9/underscore, ticker 1–25 karakter A–Z/0–9/titik/underscore/!). Bukan daftar seluruh instrumen valid: MCP tetap harus memverifikasi instrumennya. Timeframe, mode, dan drawing menggunakan allowlist enum yang sama di frontend/bridge; rules juga membatasi skema dan enum.
+## Notifikasi
 
-Bridge mengklaim dokumen melalui transaksi sekaligus mengunci `bridgeLocks/tradingview` supaya beberapa worker tidak mengubah chart bersamaan. Bridge menambahkan `claimToken` dan `leaseExpiresAt` (metadata internal, ditolak untuk write klien). Transisi: `pending → processing → completed | failed`. Hasil: `result: {text: string, screenshot: null}`. Error: `{code, message}`. Field screenshot adalah slot opsional untuk metadata `{storagePath, mimeType, capturedAt}` tahap berikutnya, **belum diunggah atau dirender**.
+Izin hanya diminta setelah tombol **Aktifkan notifikasi** ditekan. Saat tab/PWA masih berjalan, transisi request menjadi completed memunculkan notifikasi lokal dengan ringkasan hasil. Riwayat lama tidak memicu ulang notifikasi. Klik notifikasi membuka request terkait melalui `?request=ID`; akses tetap membutuhkan login pemilik. Browser/OS dapat menangguhkan aplikasi di latar belakang, sehingga fallback ini **tidak menjamin notifikasi saat aplikasi tertutup**.
 
-Timeout menghentikan tree proses Codex. SIGINT/SIGTERM menghentikan listener, membatalkan job aktif, dan mencoba menyimpan status gagal. Crash/power loss dipulihkan dengan menandai lease kedaluwarsa sebagai gagal saat bridge kembali berjalan. Lease berakhir pada timeout + 60 detik. Job tidak otomatis diulang karena drawing mungkin sudah dibuat. Penyimpanan hasil boleh dicoba ulang tanpa menjalankan Codex ulang. Token mencegah hasil worker lama menimpa status baru. Ini bukan jaminan exactly-once untuk side effect MCP saat OS/proses berhenti ekstrem; periksa chart sebelum mengirim ulang job gagal.
+Push saat aplikasi tertutup belum diaktifkan. Langkah lanjutan manual:
 
-Riwayat memuat 30 dokumen terbaru per halaman, query milik pengguna saja. Klien tidak boleh update/delete dokumen atau membaca lock. Dashboard menunjukkan status jaringan browser, **bukan heartbeat laptop**; job pending tetap menunggu ketika bridge mati. Tahap ini belum punya kuota/rate limiting server; penguncian OWNER_UID wajib sebelum penggunaan pribadi dari internet untuk membatasi pemakai yang bisa menjalankan bridge.
+1. Buat Web Push certificate/VAPID public key di Firebase Cloud Messaging. Public key boleh di frontend; private key dan service account tidak boleh.
+2. Tambahkan Firebase Messaging setelah pengguna memberi izin; simpan/rotasi token perangkat pada dokumen milik pengguna dengan Rules khusus.
+3. Integrasikan handler push Firebase Messaging ke service worker `web/src/sw.js` yang sama, sambil mempertahankan precache dan notificationclick. Hindari dua worker yang saling menggantikan.
+4. Tambahkan pengiriman FCM dari bridge/backend tepercaya setelah hasil berhasil disimpan, deduplikasi per request/perangkat, dan hapus token kedaluwarsa. Jangan kirim data akun atau instruksi lengkap pada notifikasi.
+5. Uji HTTPS di Android dengan PWA tertutup, token berubah, izin dicabut, dan klik menuju percakapan setelah login. Konfigurasi ini memerlukan implementasi lanjutan; menambahkan VAPID saja belum cukup.
 
-## Pengujian lokal
+## Verifikasi dan dependensi
 
-`npm test`: validasi/injeksi field, isolasi config/tools/env, transaksi klaim bersamaan, lock chart, hasil stale, dan pemulihan crash menggunakan model transaksi in-memory. Tidak memakai akun Firebase dan tidak menjalankan analisis nyata.
+`npm test` menguji validasi chat/legacy, prompt dan pembatasan tool, klaim/lock, hasil Codex, heartbeat kedaluwarsa, keamanan screenshot, serta transisi notifikasi. `npm run test:rules` menggunakan Firestore Emulator project **demo-tradingview-remote**, bukan produksi; memerlukan Java 21+ dan unduhan emulator pertama.
 
-`npm run test:rules`: Firebase Firestore Emulator (Java 21+ disarankan; unduhan pertama membutuhkan internet), project ID **demo-tradingview-remote**, port localhost:8080. Menguji isolasi data antarpengguna, create/query valid, akses anonim, status palsu, field tambahan, enum invalid, dan larangan update/delete. Tidak mengakses project produksi.
+Pengujian akun nyata tetap manual: terapkan rules/index, login, hidupkan bridge dan TradingView, kirim analisis, bandingkan level/drawing/screenshot dengan chart, lalu matikan bridge dan pastikan status Disconnected setelah 60 detik. Periksa juga notifikasi setelah opt-in.
 
-Untuk verifikasi end-to-end sebenarnya: aktifkan Google Auth/rules/indeks secara manual, login frontend, hidupkan bridge dan TradingView, kirim satu request, amati pending → processing → completed/failed dan bandingkan drawing/hasil dengan chart. Alur akun nyata ini tidak bisa dipastikan hanya dari build atau simulasi.
+Audit dependensi masih memiliki temuan, termasuk sharp 0.34.x yang dipakai kompresi screenshot. Upaya upgrade otomatis sebelumnya ditolak pemeriksaan persetujuan alat karena batas penggunaan. Sebelum produksi, jalankan `npm install -w bridge sharp@^0.35.4`, perbarui/hapus sharp dev dependency web jika tidak dipakai, lalu ulangi test/build dan `npm audit`. firebase-tools dan dependency Firebase juga memiliki temuan transitif; evaluasi upgrade mayor secara terpisah, jangan menjalankan audit fix --force tanpa pengujian.
 
-## Referensi implementasi
-
-- [Codex non-interactive](https://developers.openai.com/codex/noninteractive)
-- [Referensi konfigurasi Codex](https://developers.openai.com/codex/config-reference)
-- [Transaksi Firestore](https://firebase.google.com/docs/firestore/manage-data/transactions)
-- [Vite PWA](https://vite-pwa-org.netlify.app/guide/)
-
-Jika penghentian tree proses Codex tidak dapat dipastikan (`KILL_UNCONFIRMED`), bridge berhenti dan menandai lock `bridgeLocks/tradingview` dengan `blocked: true`. Pastikan proses Codex/MCP job sudah berhenti sebelum menghapus lock tersebut secara manual melalui Admin/Console. Lock terblokir tidak diklaim otomatis oleh worker lain.
-
-## Deployment GitHub Pages
-
-Workflow `.github/workflows/deploy-pages.yml` membangun dan memublikasikan **hanya `web/dist`** setelah lint/test lulus. Push ke `main` atau jalankan workflow manual. Pilih Settings → Pages → Source: GitHub Actions pada repository tujuan. Bridge, service account, dan environment lokal tidak termasuk artefak website; bridge tetap berjalan di laptop. Jangan memasukkan service account sebagai secret workflow ini.
-
-Base path mengikuti output Configure Pages otomatis, sehingga aset, manifest, start URL, scope, dan service worker bekerja pada `/nama-repository/` maupun domain root. Untuk menguji subpath lokal:
-
-```powershell
-$env:VITE_BASE_PATH = '/TradingViewRemote/'
-npm run build
-npm run preview
-```
-
-Buka `http://127.0.0.1:4173/TradingViewRemote/`. Hapus environment `VITE_BASE_PATH` dari terminal setelah pengujian untuk kembali ke build root. Setelah deployment, tambahkan hostname Pages (misalnya `kaffahstorage-stack.github.io`, tanpa path repository) ke Firebase Authentication Authorized domains. Pengaturan Firebase tersebut tetap manual.
+Workflow GitHub Pages hanya menerbitkan web/dist. Bridge tetap berjalan di laptop. Publikasi frontend tidak menerapkan Firestore Rules dan tidak menjalankan bridge di laptop; kedua langkah tersebut tetap manual.

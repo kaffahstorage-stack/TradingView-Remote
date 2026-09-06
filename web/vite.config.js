@@ -16,6 +16,9 @@ export default defineConfig({
       base,
       scope: base,
       registerType: 'prompt',
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'TradingView Remote',
@@ -26,19 +29,14 @@ export default defineConfig({
         start_url: base,
         scope: base,
         display: 'standalone',
-        background_color: '#0c1017',
-        theme_color: '#0c1017',
+        background_color: '#f7f8fa',
+        theme_color: '#ffffff',
         icons: [
           { src: `${base}icon-192.png`, sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: `${base}icon-512.png`, sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
-      workbox: {
-        navigateFallback: `${base}index.html`,
-        navigateFallbackDenylist: [/\/__\/auth/],
-        globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
-        cleanupOutdatedCaches: true,
-      },
+      injectManifest: { globPatterns: ['**/*.{js,css,html,png,svg,woff2}'] },
     }),
   ],
 });
